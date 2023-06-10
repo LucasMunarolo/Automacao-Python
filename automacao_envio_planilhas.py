@@ -1,6 +1,7 @@
 import openpyxl
 import os
 from datetime import date
+import win32com.client as win32
 
 
 # Define o vencimento conforme a data de hoje
@@ -31,6 +32,15 @@ def define_vencimento(vencimento):
     data_vencimento = f'{vencimento}/{mes}/{ano}'
     # Retorna a data de vencimento
     return data_vencimento
+
+
+# Validar anexos que serão enviados no e-mail
+def validar_anexo(anexo):
+    # De acordo com as regras de negócio, só serão permitidos anexos em formato .xlsx ou .pdf
+    if not anexo.endswith('.pdf') or not anexo.endswith('.xlsx'):
+        raise ValueError('Os anexos precisam estar no formato .pdf ou .xlsx')
+    else:
+        return anexo
 
 
 class AutomacaoEnvioPlanilhas:
@@ -66,7 +76,7 @@ class AutomacaoEnvioPlanilhas:
                 os.makedirs(caminho_pasta_nome_empresa)
 
     # Retornar data de pagamento, através da planilha de contatos, no formato dd/MM/aaaa
-    def retornar_data_pagamento(self, nome_empresa):
+    def _retornar_data_pagamento(self, nome_empresa):
         # Percorre as linhas da planilha de contatos:
         for linha in range(2, self._planilha_contatos.max_row + 1):
             # Verifica se o nome da empresa está na linha
@@ -75,4 +85,66 @@ class AutomacaoEnvioPlanilhas:
                 vencimento = self._planilha_contatos.cell(row=linha, column=2).value
                 # Retorna a data de vencimento formatada
                 return define_vencimento(vencimento)
-        return None
+        # Se não encontrar retorna uma excessão
+        raise Exception('Empresa não encontrada!')
+
+    # Função para encontrar o destinatário do e-mail
+    def _retornar_email_destinatario(self, nome_empresa):
+        # Percorre as linhas da planilha de contatos:
+        for linha in range(2, self._planilha_contatos.max_row + 1):
+            # Procura o parâmetro nome_empresa na primeira coluna da planilha de contatos
+            if self._planilha_contatos.cell(row=linha, column=1).value.strip() == nome_empresa.strip():
+                # Se encontrar, verifica os e-mails da empresa
+                email = self._planilha_contatos.cell(row=linha, column=3).value
+                # Retorna os e-mails da empresa
+                return email
+        # Se não encontrar retorna uma excessão
+        raise Exception('Empresa não encontrada!')
+
+    # Retorna uma lista contendo o nome de todas as empresas
+    def retornar_todas_empresas(self):
+        # Instancia uma lista vazia onde serão adicionadas as empresas
+        lista_empresas = []
+        # Percorre as linhas da planilha de contatos
+        for linha in range(2, self._planilha_contatos.max_row + 1):
+            # Obtém o nome da empresa
+            nome_empresa = self._planilha_contatos.cell(row=linha, column=1).value
+            # Adiciona esta empresa na lista de empresas
+            lista_empresas.append(nome_empresa)
+        # Retorna a lista contendo todas as empresas
+        return lista_empresas
+
+    # Função para enviar um e-mail personalizado para cada empresa
+    def enviar_email(self, nome_empresa, anexo_1, anexo_2=None, anexo_3=None):
+        # Abre a aplicação do outlook
+        outlook = win32.Dispatch('outlook.application')
+        # Cria um e-mail
+        email = outlook.CreateItem(0)
+        # Informações necessárias para o envio do e-mail
+        nome_empresa_formatado = nome_empresa.title()
+        data_pagamento = self._retornar_data_pagamento(nome_empresa)
+        email_empresa = self._retornar_email_destinatario(nome_empresa)
+        assunto_email = f'{nome_empresa_formatado} - Parcelas com vencimento {data_pagamento}'
+        texto_email = f'''
+        <p>Olá {nome_empresa_formatado}!</p>
+        
+        <p>Segue em anexo informações referentes às parcelas com vencimento em
+        {data_pagamento}.</p>
+        
+        <p>Qualquer dúvida ficamos à disposição</p>
+        
+        <p>Atenciosamente</p>
+        '''
+        # Configurando as informações do e-mail
+        email.To = email_empresa
+        email.Subject = assunto_email
+        email.HTMLBody = texto_email
+        # Adicionando os anexos válidos ao e-mail
+        anexos = [anexo_1, anexo_2, anexo_3]
+        for anexo in anexos:
+            if anexo is not None:
+                anexo_valido = validar_anexo(anexo)
+                email.Attachments.Add(anexo_valido)
+        # Enviando o e-mail
+        email.Send()
+
